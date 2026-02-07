@@ -1,0 +1,1330 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>万籁·剧集管理中枢 (云端版)</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: { stone: { 950: '#0c0a09' } },
+                    animation: { 
+                        'toast-in': 'toastIn 0.3s ease-out forwards', 
+                        'toast-out': 'toastOut 0.3s ease-in forwards',
+                        'slide-up': 'slideUp 0.3s ease-out forwards',
+                        'pop-in': 'popIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+                    },
+                    keyframes: {
+                        toastIn: { '0%': { opacity: 0, transform: 'translateY(10px)' }, '100%': { opacity: 1, transform: 'translateY(0)' } },
+                        toastOut: { '0%': { opacity: 1, transform: 'translateY(0)' }, '100%': { opacity: 0, transform: 'translateY(-10px)' } },
+                        slideUp: { '0%': { transform: 'translate(-50%, 100%)' }, '100%': { transform: 'translate(-50%, 0)' } },
+                        popIn: { '0%': { opacity: 0, transform: 'scale(0.95)' }, '100%': { opacity: 1, transform: 'scale(1)' } }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        .dark .custom-scrollbar::-webkit-scrollbar-thumb { background: #444; }
+        .animate-in { animation: fadeIn 0.3s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        select { appearance: none; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .draggable-source { opacity: 0.4; border: 2px dashed #6366f1 !important; transform: scale(0.98); }
+        .drag-over { border-top: 2px solid #6366f1 !important; }
+        .drag-handle { cursor: grab; touch-action: none; }
+        .drag-handle:active { cursor: grabbing; }
+        .checkbox-wrapper input:checked + div { background-color: #2563eb; border-color: #2563eb; }
+        .checkbox-wrapper input:checked + div svg { display: block; }
+    </style>
+</head>
+<body class="bg-slate-50 dark:bg-[#0f1012] text-slate-800 dark:text-stone-300 transition-colors duration-300 min-h-screen pb-24">
+
+    <div id="app"></div>
+    <div id="toast-container" class="fixed top-6 left-1/2 -translate-x-1/2 z-[100] flex flex-col gap-2 pointer-events-none"></div>
+    <div id="confirm-modal-container"></div>
+
+    <script type="module">
+        // ==========================================
+        // 0. 连接神经：Firebase 初始化
+        // ==========================================
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, doc, onSnapshot, setDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyBmaiOqpJ-BK0M44-gzM6aKQzpyE-VcrvY",
+            authDomain: "pollux-os-76fea.firebaseapp.com",
+            projectId: "pollux-os-76fea",
+            storageBucket: "pollux-os-76fea.firebasestorage.app",
+            messagingSenderId: "919140524331",
+            appId: "1:919140524331:web:9f11fb6a3c96c024ada56e",
+            measurementId: "G-D0BGJQTVER"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        // 对应你截图中的数据库路径：artifacts -> wanlai-default
+        const docRef = doc(db, "artifacts", "wanlai-default");
+
+        // ==========================================
+        // 1. 基础设施与工具函数
+        // ==========================================
+        setInterval(() => {
+            if (typeof lucide !== 'undefined' && lucide.createIcons) {
+                lucide.createIcons();
+            }
+        }, 1000);
+
+        window.showToast = (message, type = 'info') => {
+            const container = document.getElementById('toast-container');
+            const colors = {
+                info: 'bg-slate-800 text-white dark:bg-white dark:text-black',
+                error: 'bg-red-600 text-white',
+                success: 'bg-emerald-600 text-white'
+            };
+            const el = document.createElement('div');
+            el.className = `${colors[type]} px-4 py-2 rounded-lg shadow-xl text-xs font-bold animate-toast-in flex items-center gap-2 pointer-events-auto`;
+            el.innerHTML = `<span>${message}</span>`;
+            container.appendChild(el);
+            setTimeout(() => {
+                el.classList.remove('animate-toast-in');
+                el.classList.add('animate-toast-out');
+                setTimeout(() => el.remove(), 300);
+            }, 3000);
+        };
+
+        window.showConfirm = (message, onConfirm) => {
+            const container = document.getElementById('confirm-modal-container');
+            container.innerHTML = `
+                <div class="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in">
+                    <div class="bg-white dark:bg-[#1a1c1e] w-full max-w-sm rounded-xl shadow-2xl p-6 border dark:border-stone-800">
+                        <h3 class="text-sm font-bold mb-4 text-slate-700 dark:text-slate-200">${message}</h3>
+                        <div class="flex gap-3">
+                            <button onclick="document.getElementById('confirm-modal-container').innerHTML=''" class="flex-1 py-2 text-xs font-bold text-slate-500 bg-slate-100 dark:bg-stone-900 rounded-lg hover:bg-slate-200">取消</button>
+                            <button id="confirm-btn-action" class="flex-1 py-2 text-xs font-bold text-white bg-red-600 rounded-lg hover:bg-red-500">确认执行</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.getElementById('confirm-btn-action').onclick = () => {
+                onConfirm();
+                document.getElementById('confirm-modal-container').innerHTML = '';
+            };
+        };
+
+        // ==========================================
+        // 2. 状态与配置
+        // ==========================================
+        const MOCK_USERS = {
+            'castor': { id: 'u1', name: '策划(Admin)', role: 'ADMIN', avatarColor: 'bg-indigo-600' },
+            'zhuli':  { id: 'u2', name: '助理(Core)', role: 'ASSISTANT', avatarColor: 'bg-pink-600' },
+            'daoyan': { id: 'u3', name: '导演(Lead)', role: 'DIRECTOR', avatarColor: 'bg-purple-600' }
+        };
+        const GUEST_USER = { id: 'guest', name: 'CV/访客', role: 'GUEST', avatarColor: 'bg-slate-500' };
+        const STANDARD_STAFF_ROLES = ['策划', '导演', '编剧', '后期', '美工', '歌策', '助理'];
+        const SELECTABLE_STAFF_ROLES = ['编剧', '后期', '美工', '歌策', '宣传', '场控', '监制', 'PV'];
+
+        const STATUS_CONFIG = {
+            'recording': { label: '🎙️ 收音中', color: 'text-blue-500 bg-blue-50 border-blue-200 dark:bg-blue-900/30' },
+            'auditing': { label: '🎧 审音中', color: 'text-purple-500 bg-purple-50 border-purple-200 dark:bg-purple-900/30' },
+            'revising': { label: '🟠 返修中', color: 'text-amber-500 bg-amber-50 border-amber-200 dark:bg-amber-900/30' },
+            'completed': { label: '✂️ 已剪音/完成', color: 'text-emerald-500 bg-emerald-50 border-emerald-200 dark:bg-emerald-900/30' },
+            'pending': { label: '⚪ 待定', color: 'text-slate-500 bg-slate-50 border-slate-200 dark:bg-stone-800' },
+            'working': { label: '🔵 制作中', color: 'text-blue-500 bg-blue-50 border-blue-200 dark:bg-blue-900/30' },
+            'reviewing': { label: '🟣 审核中', color: 'text-purple-500 bg-purple-50 border-purple-200 dark:bg-purple-900/30' }
+        };
+
+        const EP_LIFECYCLE = {
+            'scripting': { label: '📜 剧本创作', color: 'text-stone-500 bg-stone-100 dark:bg-stone-800' },
+            'recording': { label: '🎙️ 收音中',   color: 'text-blue-500 bg-blue-100 dark:bg-blue-900/30' },
+            'auditing':  { label: '🎧 审音中',   color: 'text-purple-500 bg-purple-100 dark:bg-purple-900/30' },
+            'post':      { label: '🎬 后期制作', color: 'text-pink-500 bg-pink-100 dark:bg-pink-900/30' },
+            'completed': { label: '✅ 已发布',   color: 'text-emerald-500 bg-emerald-100 dark:bg-emerald-900/30' }
+        };
+
+        const CAST_TYPES = {
+            'MAIN': { label: '🔴 主役', color: 'text-red-500 border-red-200 bg-red-50 dark:bg-red-900/20' },
+            'SUPPORT': { label: '🔵 协役', color: 'text-blue-500 border-blue-200 bg-blue-50 dark:bg-blue-900/20' },
+            'EXTRA': { label: '⚪ 龙套/群杂', color: 'text-slate-500 border-slate-200 bg-slate-50 dark:bg-slate-800' }
+        };
+
+        // State Management
+        window.state = {
+            // 本地存储：用户身份 (你是谁) 和 主题 (亮/暗)
+            currentUser: JSON.parse(localStorage.getItem('pollux_user_v5')) || null,
+            theme: localStorage.getItem('pollux_theme') || 'light',
+            
+            // 云端同步：项目数据和消息 (大家看的一样)
+            globalMessages: [{ id: 'm1', author: '系统', role: 'SYSTEM', content: '正在连接 Pollux 云端数据库...', timestamp: 'System' }],
+            projects: {}, // 默认为空，等待云端填充
+
+            // UI 临时状态
+            activeProjectId: null,
+            dashboardView: 'OVERVIEW',
+            filterType: 'ALL',
+            filterStatus: 'ALL',
+            filterCastType: 'ALL',
+            onlyUnsubmitted: false,
+            searchText: '', 
+            sortMode: 'DEFAULT',
+            editingMemberId: null,
+            viewingTask: null, editingTask: null, editingCommentId: null,
+            showCredits: false, showNewProjectModal: false, showNewEpModal: false, showEditEpModal: false, showEditProjectModal: false, showEditTaskModal: false,
+            editingEpId: null, editingProjectId: null,
+            cmdEp: '', cmdMemberId: '', cmdText: '', cmdLink: '', cmdDDL: '',
+            draggedMemberIndex: null,
+            isSelectionMode: false,
+            selectedMemberIds: [],
+            showBatchMenu: false,
+            showBatchCastTypeMenu: false
+        };
+
+        window.tempNewMember = { roleName: '', cvName: '', type: 'CAST', status: 'recording', castType: 'MAIN', avatarColor: 'bg-blue-500', comments: [], tasks: [], feedbackLink: '', weibo: '', email: '', society: '' };
+
+        // 核心：保存状态 (云端 + 本地)
+        window.saveState = async () => {
+            try {
+                // 1. 保存个人偏好到本地
+                localStorage.setItem('pollux_user_v5', JSON.stringify(window.state.currentUser));
+                localStorage.setItem('pollux_theme', window.state.theme);
+
+                // 2. 保存公共数据到云端 (仅当有数据时)
+                if (window.state.projects && Object.keys(window.state.projects).length > 0) {
+                    await setDoc(docRef, {
+                        projects: window.state.projects,
+                        globalMessages: window.state.globalMessages,
+                        lastUpdate: new Date().toISOString(),
+                        updater: window.state.currentUser ? window.state.currentUser.name : 'Unknown'
+                    }, { merge: true });
+                }
+            } catch (e) { 
+                console.error("Save failed:", e); 
+                window.showToast("云端同步失败，请检查网络", "error");
+            }
+        };
+
+        // 监听云端变化
+        onSnapshot(docRef, (doc) => {
+            if (doc.exists()) {
+                const data = doc.data();
+                if (data.projects) window.state.projects = data.projects;
+                if (data.globalMessages) window.state.globalMessages = data.globalMessages;
+                window.render();
+                console.log("🔥 云端数据已同步");
+            } else {
+                console.log("☁️ 云端为空，使用初始模版");
+                // 初始化默认数据
+                if (Object.keys(window.state.projects).length === 0) {
+                    window.state.projects = {
+                        'canghaizhi': {
+                            id: 'canghaizhi',
+                            name: '沧海志',
+                            description: '古风 / 权谋 / 群像',
+                            themeColor: 'from-blue-600 to-cyan-600',
+                            episodes: { 'EP1': { id: 'EP1', title: '第一期：初见沧海', status: 'post', members: [] } }
+                        }
+                    };
+                    window.saveState();
+                }
+            }
+        });
+
+        const generateId = () => Math.random().toString(36).substr(2, 9);
+        const getNow = () => new Date().toLocaleString('zh-CN', { hour12: false, month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit' });
+
+        // 权限检查函数
+        const canAddMember = (user) => ['ADMIN', 'ASSISTANT', 'DIRECTOR'].includes(user?.role);
+        const canCreateStaff = (user) => user?.role === 'ADMIN';
+        const canManageTask = (user) => ['ADMIN', 'ASSISTANT'].includes(user?.role);
+        const canManageProject = (user) => ['ADMIN'].includes(user?.role);
+        const canReorder = (user) => ['ADMIN', 'ASSISTANT', 'DIRECTOR'].includes(user?.role);
+
+        const checkPermission = (user, targetMember) => {
+            if (!user) return { canEdit: false, canDelete: false };
+            if (user.role === 'ADMIN' || user.role === 'ASSISTANT') return { canEdit: true, canDelete: true };
+            if (user.role === 'DIRECTOR') return targetMember?.type === 'CAST' ? { canEdit: true, canDelete: true } : { canEdit: false, canDelete: false };
+            return { canEdit: false, canDelete: false };
+        };
+
+        const getStandardStaffTemplate = () => {
+            return STANDARD_STAFF_ROLES.map(role => ({
+                id: generateId(), roleName: role, cvName: '待定', type: 'STAFF', status: 'pending',
+                avatarColor: 'bg-stone-500', comments: [], tasks: [], feedbackLink: '', weibo: '', email: '', society: ''
+            }));
+        };
+
+        const checkDeepLink = () => {
+            try {
+                const params = new URLSearchParams(window.location.search);
+                const pId = params.get('p');
+                if (pId && window.state.projects[pId]) {
+                    window.state.activeProjectId = pId;
+                    window.state.dashboardView = 'OVERVIEW';
+                }
+            } catch (e) { }
+        };
+
+        // ==========================================
+        // 3. 渲染逻辑 (Render)
+        // ==========================================
+        window.render = () => {
+            try {
+                const app = document.getElementById('app');
+                document.documentElement.className = window.state.theme;
+                if (!window.state.currentUser) {
+                    if (window.state.loginStep === 'ROLE_SELECT') app.innerHTML = renderRoleSelection();
+                    else app.innerHTML = renderLogin();
+                }
+                else if (!window.state.activeProjectId) app.innerHTML = renderHub();
+                else app.innerHTML = renderDashboard();
+                if (typeof lucide !== 'undefined' && lucide.createIcons) lucide.createIcons();
+                
+                const chatBox = document.getElementById('chat-scroll-area');
+                if(chatBox) chatBox.scrollTop = chatBox.scrollHeight;
+                if (!window.state.editingCommentId) {
+                    const taskChatBox = document.getElementById('task-chat-scroll');
+                    if(taskChatBox) taskChatBox.scrollTop = taskChatBox.scrollHeight;
+                }
+            } catch (e) {
+                console.error("Render Error:", e);
+            }
+        };
+
+        const renderLogin = () => {
+            return `<div class="min-h-screen flex items-center justify-center p-6 animate-in"><button onclick="toggleTheme()" class="absolute top-6 right-6 p-2 rounded-full bg-white dark:bg-stone-800 shadow-lg hover:scale-110 transition-transform">${window.state.theme === 'light' ? '<i data-lucide="moon"></i>' : '<i data-lucide="sun"></i>'}</button><div class="w-full max-w-md bg-white dark:bg-[#16181a] border border-slate-200 dark:border-stone-800 rounded-2xl p-8 shadow-2xl"><div class="flex flex-col items-center mb-8"><div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center mb-4"><i data-lucide="audio-waveform" class="text-white w-8 h-8"></i></div><h1 class="text-2xl font-bold dark:text-stone-100">万籁·剧集管理中枢</h1><p class="text-slate-500 text-xs mt-2 font-mono">WANLAI CORE v16.25 (Cloud Sync)</p></div><div class="space-y-6"><div><label class="block text-[10px] font-bold text-slate-400 uppercase mb-1.5 ml-1">Identity Key</label><div class="flex gap-2"><input id="login-input" type="text" placeholder="请输入您的身份密钥..." class="flex-1 bg-slate-100 dark:bg-stone-900 border border-slate-200 dark:border-stone-700 rounded-xl px-4 py-3 outline-none focus:border-blue-500 transition-all" onkeydown="if(event.key==='Enter') handleLogin()"><button onclick="handleLogin()" class="bg-blue-600 hover:bg-blue-500 text-white px-6 rounded-xl transition-all shadow-lg shadow-blue-500/20"><i data-lucide="arrow-right"></i></button></div></div><div class="relative flex justify-center text-xs uppercase text-slate-400"><span class="bg-white dark:bg-[#16181a] px-2 z-10">OR</span><div class="absolute top-1/2 w-full border-t border-slate-200 dark:border-stone-800"></div></div><button onclick="handleGuestLogin()" class="w-full bg-slate-50 dark:bg-stone-900 border border-slate-200 dark:border-stone-700 py-3 rounded-xl flex items-center justify-center gap-3 hover:bg-slate-100 dark:hover:bg-stone-800 transition-colors"><i data-lucide="users" class="text-slate-400"></i><span class="font-medium">访客 / CV 快速通道</span></button></div></div></div>`;
+        }
+
+        const renderRoleSelection = () => {
+            return `<div class="min-h-screen flex items-center justify-center p-6 animate-in"><div class="w-full max-w-md bg-white dark:bg-[#16181a] border border-slate-200 dark:border-stone-800 rounded-2xl p-8 shadow-2xl"><div class="text-center mb-6"><h2 class="text-xl font-bold mb-2">选择您的席位</h2><p class="text-slate-500 text-xs">Staff 仅拥有交流与查看权限</p></div><div class="grid grid-cols-2 gap-3 mb-6">${SELECTABLE_STAFF_ROLES.map(role => `<button onclick="handleStaffRoleSelect('${role}')" class="p-3 rounded-xl border border-slate-200 dark:border-stone-700 hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all text-sm font-bold text-slate-700 dark:text-stone-300">${role}</button>`).join('')}</div><button onclick="window.state.loginStep='KEY'; render()" class="w-full text-slate-400 text-xs hover:text-slate-600">返回上一步</button></div></div>`;
+        }
+
+        const renderHub = () => {
+            const isPrivileged = canManageProject(window.state.currentUser);
+            const projectCards = Object.values(window.state.projects).map(p => {
+                const members = Object.values(p.episodes).flatMap(e => e.members);
+                const progress = members.length > 0 ? Math.round((members.filter(m => m.status === 'completed').length / members.length) * 100) : 0;
+                const epSummary = Object.values(p.episodes).map(ep => {
+                    const statusConfig = EP_LIFECYCLE[ep.status || 'scripting'];
+                    return `<span class="inline-flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full ${statusConfig.color.split(' ')[0]} bg-current"></span>${ep.title.split('：')[0]} ${statusConfig.label.split(' ')[1]}</span>`;
+                }).join('<span class="mx-2 text-slate-300 dark:text-stone-700">|</span>');
+                
+                return `<div class="group relative bg-white dark:bg-[#16181a] border border-slate-200 dark:border-stone-800 rounded-2xl overflow-hidden hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer" onclick="selectProject('${p.id}')">
+                    <div class="h-28 bg-gradient-to-r ${p.themeColor} p-6 relative flex flex-col justify-between">
+                        <div><h3 class="text-white text-xl font-bold">${p.name}</h3><p class="text-white/70 text-xs mt-0.5">${p.description}</p></div>
+                    </div>
+                    ${isPrivileged ? `<button onclick="event.stopPropagation(); openEditProject('${p.id}')" class="absolute top-3 right-3 p-2 bg-black/20 hover:bg-black/40 backdrop-blur-sm text-white rounded-lg opacity-0 group-hover:opacity-100 transition-all z-20"><i data-lucide="settings" class="w-4 h-4"></i></button>` : ''}
+                    <div class="p-5">
+                        <div class="flex justify-between items-end mb-2"><span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Overall Progress</span><span class="text-xl font-bold text-slate-700 dark:text-stone-200">${progress}%</span></div>
+                        <div class="w-full bg-slate-100 dark:bg-stone-800 h-1.5 rounded-full overflow-hidden mb-4"><div class="h-full bg-white/50 backdrop-blur-sm relative"><div class="absolute inset-0 bg-blue-500" style="width: ${progress}%"></div></div></div>
+                        <div class="border-t border-slate-100 dark:border-stone-800 pt-3 mt-2"><div class="text-[10px] text-slate-500 dark:text-stone-500 flex flex-wrap gap-y-1 items-center">${epSummary || '<span class="italic opacity-50">暂无剧集进度</span>'}</div></div>
+                    </div>
+                </div>`;
+            }).join('');
+            return `<nav class="border-b border-slate-200 dark:border-stone-800 bg-white/80 dark:bg-[#16181a]/80 backdrop-blur-md sticky top-0 z-[50]"><div class="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center"><div class="flex items-center gap-3"><div class="w-8 h-8 rounded-lg bg-black dark:bg-white flex items-center justify-center"><i data-lucide="audio-waveform" class="w-5 h-5 dark:text-black text-white"></i></div><h1 class="text-sm font-bold">万籁·剧集管理中枢</h1></div><div class="flex items-center gap-4"><button onclick="toggleTheme()">${window.state.theme === 'light' ? '<i data-lucide="moon"></i>' : '<i data-lucide="sun"></i>'}</button><button onclick="handleLogout()" class="text-xs font-bold text-slate-500 hover:text-red-500">退出登录</button></div></div></nav><main class="max-w-4xl mx-auto px-4 py-12 animate-in"><div class="text-center mb-10"><h2 class="text-3xl font-bold mb-2">My Universe</h2><p class="text-slate-500">欢迎回来，${window.state.currentUser.name}。</p></div><div class="grid grid-cols-1 md:grid-cols-2 gap-6">${projectCards}${isPrivileged ? `<div onclick="window.state.showNewProjectModal=true; render();" class="border-2 border-dashed border-slate-200 dark:border-stone-800 rounded-2xl flex flex-col items-center justify-center p-6 min-h-[220px] text-slate-400 hover:text-blue-500 hover:border-blue-400 transition-all cursor-pointer group"><i data-lucide="plus" class="mb-2 w-8 h-8 group-hover:scale-110 transition-transform"></i><span class="font-bold text-sm">创建新剧集项目</span></div>` : ''}</div></main>${window.state.showNewProjectModal ? renderNewProjectModal() : ''}${window.state.showEditProjectModal ? renderEditProjectModal() : ''}`;
+        }
+
+        const renderDashboard = () => {
+            if (!window.state.projects[window.state.activeProjectId]) { window.state.activeProjectId = null; window.render(); return ''; }
+            const project = window.state.projects[window.state.activeProjectId];
+            const hasOverviewAccess = true; 
+            const isPrivileged = canManageTask(window.state.currentUser);
+            const epKeys = Object.keys(project.episodes);
+            if (!window.state.dashboardView) window.state.dashboardView = 'OVERVIEW'; 
+            const isOverview = window.state.dashboardView === 'OVERVIEW';
+            const allMembers = Object.values(project.episodes).flatMap(ep => ep.members.map(m => ({...m, epId: ep.id})));
+            const pendingAudits = allMembers.filter(m => m.type === 'CAST' && m.status === 'auditing');
+            const revisions = allMembers.filter(m => m.status === 'revising');
+            const allTasks = allMembers.flatMap(m => (m.tasks || []).map(t => ({...t, owner: m, epId: m.epId}))).sort((a, b) => a.done - b.done);
+            if (!window.state.cmdEp && epKeys.length > 0) window.state.cmdEp = epKeys[0];
+
+            return `
+            <nav class="border-b border-slate-200 dark:border-stone-800 bg-white/80 dark:bg-[#16181a]/80 backdrop-blur-md sticky top-0 z-[50]"><div class="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center"><div class="flex items-center gap-3 cursor-pointer" onclick="window.state.activeProjectId = null; render();"><div class="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center"><i data-lucide="globe" class="w-5 h-5 text-white"></i></div><div class="flex flex-col"><h1 class="text-sm font-bold leading-tight">${project.name}</h1><span class="text-[10px] text-slate-400 font-mono">CONSOLE</span></div><button onclick="copyProjectLink()" class="ml-2 flex items-center gap-1.5 px-2 py-1 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 rounded-lg text-[10px] font-bold hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors"><i data-lucide="link" class="w-3 h-3"></i> 剧集坐标</button></div><div class="flex items-center gap-4"><div class="text-right hidden sm:block"><div class="text-xs font-bold">${window.state.currentUser.name}</div><div class="text-[10px] text-slate-400 uppercase">${window.state.currentUser.role.replace('_MEMBER','')}</div></div><button onclick="handleLogout()" class="p-2 text-slate-400 hover:text-red-500 bg-slate-100 dark:bg-stone-900 rounded-lg"><i data-lucide="log-out" class="w-4 h-4"></i></button></div></div></nav>
+            <main class="max-w-5xl mx-auto px-4 py-6">
+                <div class="flex flex-col md:flex-row gap-4 items-center justify-between bg-white dark:bg-stone-900/30 border border-slate-200 dark:border-stone-800 p-4 rounded-xl shadow-sm mb-6"><button onclick="window.state.activeProjectId = null; render();" class="p-2 rounded-lg bg-slate-100 dark:bg-stone-800 text-slate-500 flex items-center gap-2 text-xs font-bold hover:text-blue-500 transition-colors"><i data-lucide="arrow-left" class="w-4 h-4"></i> 返回大厅</button><div class="flex gap-2 overflow-x-auto no-scrollbar items-center">${hasOverviewAccess ? `<button onclick="setDashboardView('OVERVIEW')" class="shrink-0 px-4 py-2 rounded-lg text-xs font-bold border transition-colors ${isOverview ? 'bg-slate-800 text-white dark:bg-white dark:text-black' : 'bg-white dark:bg-stone-900 text-slate-600 dark:text-stone-400 border-slate-200 dark:border-stone-700'}">指挥总览</button><div class="w-px h-5 bg-slate-200 dark:bg-stone-700 mx-1"></div>` : ''}${epKeys.map(ep => `<button onclick="setDashboardView('${ep}')" class="shrink-0 px-4 py-2 rounded-lg text-xs font-bold border transition-colors ${window.state.dashboardView === ep ? 'bg-blue-600 text-white border-blue-600' : 'bg-white dark:bg-stone-900 text-slate-600 dark:text-stone-400 border-slate-200 dark:border-stone-700'}">${project.episodes[ep].title}</button>`).join('')}${isPrivileged ? `<button onclick="window.state.showNewEpModal = true; render();" class="shrink-0 p-2 rounded-lg border border-dashed border-slate-300 dark:border-stone-600 text-slate-400 hover:text-blue-500 hover:border-blue-400 transition-all"><i data-lucide="plus" class="w-4 h-4"></i></button>` : ''}</div></div>
+                ${isOverview ? renderOverview(project, pendingAudits, revisions, allTasks) : renderEpisodeView(project.episodes[window.state.dashboardView], project)}
+            </main>
+            ${window.state.editingMemberId ? renderDetailModal() : ''}${window.state.viewingTask ? renderTaskDetailModal() : ''}${window.state.showEditTaskModal ? renderEditTaskModal() : ''}${window.state.showCredits ? renderCreditsModal() : ''}${window.state.showNewEpModal ? renderNewEpModal() : ''}${window.state.showEditEpModal ? renderEditEpModal() : ''}`;
+        }
+
+        const renderOverview = (project, pendingAudits, revisions, allTasks) => {
+            const canManage = canManageTask(window.state.currentUser);
+            let assignableMembers = project.episodes[window.state.cmdEp]?.members || [];
+            if (window.state.currentUser.role === 'ASSISTANT') assignableMembers = assignableMembers.filter(m => m.type !== 'STAFF');
+
+            return `<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in"><div class="${canManage ? 'lg:col-span-2' : 'lg:col-span-3'} space-y-6"><div class="bg-white dark:bg-[#16181a] border border-slate-200 dark:border-stone-800 p-5 rounded-xl"><div class="flex justify-between items-center mb-4"><h3 class="text-sm font-bold flex items-center gap-2"><i data-lucide="layers" class="text-blue-500 w-4 h-4"></i> 分集进度概览</h3></div><div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">${Object.values(project.episodes).map(ep => { const sc = EP_LIFECYCLE[ep.status || 'scripting']; return `<div class="p-3 bg-slate-50 dark:bg-stone-900/50 rounded-lg border border-slate-100 dark:border-stone-800 flex flex-col gap-1"><span class="text-xs font-bold truncate" title="${ep.title}">${ep.title}</span><div class="text-[10px] px-2 py-0.5 rounded w-fit ${sc.color} font-bold">${sc.label}</div></div>`; }).join('')}</div></div><div class="grid grid-cols-2 gap-4"><div class="bg-blue-50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-900/20 p-5 rounded-xl"><h3 class="text-blue-500 text-xs font-bold uppercase mb-2">待审音 (Audit)</h3><div class="text-4xl font-bold text-blue-700 dark:text-blue-400">${pendingAudits.length}</div></div><div class="bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/20 p-5 rounded-xl"><h3 class="text-amber-500 text-xs font-bold uppercase mb-2">返修/风险 (Alert)</h3><div class="text-4xl font-bold text-amber-600 dark:text-amber-500">${revisions.length}</div></div></div><div class="bg-white dark:bg-[#16181a] border border-slate-200 dark:border-stone-800 rounded-xl p-5 h-[400px] flex flex-col"><h3 class="text-sm font-bold mb-4 flex items-center gap-2"><i data-lucide="message-square" class="text-emerald-500 w-4 h-4"></i> 全域协作留言板</h3><div id="chat-scroll-area" class="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar mb-4 bg-slate-50 dark:bg-stone-900/50 rounded-lg p-3 border border-slate-100 dark:border-stone-800">${window.state.globalMessages.map(msg => { const isMe = msg.author === window.state.currentUser.name; return `<div class="flex flex-col ${isMe ? 'items-end' : 'items-start'}"><div class="flex items-center gap-2 mb-1"><span class="text-[10px] font-bold text-slate-500 ${isMe ? 'order-2' : ''}">${msg.author}</span><span class="text-[9px] text-slate-300 ${isMe ? 'order-1' : ''}">${msg.timestamp}</span></div><div class="text-xs px-3 py-2 rounded-lg max-w-[85%] break-words ${isMe ? 'bg-blue-600 text-white rounded-tr-none' : 'bg-white dark:bg-stone-800 border border-slate-200 dark:border-stone-700 rounded-tl-none'}">${msg.content}</div></div>`; }).join('')}</div><div class="flex gap-2"><input id="global-chat-input" placeholder="发送消息..." class="flex-1 bg-slate-100 dark:bg-stone-900 border border-slate-200 dark:border-stone-700 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500" onkeydown="if(event.key==='Enter') sendGlobalMessage()"><button onclick="sendGlobalMessage()" class="bg-emerald-500 hover:bg-emerald-600 text-white px-4 rounded-lg transition-colors"><i data-lucide="send" class="w-4 h-4"></i></button></div></div><div class="bg-white dark:bg-[#16181a] border border-slate-200 dark:border-stone-800 rounded-xl p-5 h-[300px] flex flex-col"><h3 class="text-sm font-bold mb-4 flex items-center gap-2"><i data-lucide="activity" class="text-purple-500 w-4 h-4"></i> 全局任务队列 (历史留痕)</h3><div class="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">${allTasks.length === 0 ? `<div class="flex flex-col items-center justify-center h-full text-slate-400"><i data-lucide="check-circle-2" class="w-8 h-8 opacity-20 mb-2"></i><span class="text-xs">一切运转良好。</span></div>` : allTasks.map(t => { 
+                const opacity = t.done ? 'opacity-50 grayscale' : '';
+                const epTitle = project.episodes[t.epId]?.title || t.epId;
+                return `<div class="group/task flex items-center gap-3 p-3 bg-slate-50 dark:bg-stone-900/50 rounded-lg border border-slate-100 dark:border-stone-800 transition-all cursor-pointer hover:border-blue-300 dark:hover:border-stone-600 ${opacity}" onclick="openTaskDetail('${t.epId}', '${t.owner.id}', '${t.id}')">
+                    <button type="button" ${canManage ? `onclick="event.stopPropagation(); toggleTaskStatus('${t.epId}', '${t.owner.id}', '${t.id}')"` : 'disabled'} class="w-4 h-4 rounded-full border border-slate-400 flex items-center justify-center shrink-0 ${canManage ? 'hover:border-purple-500' : 'cursor-default'} ${t.done ? 'bg-slate-300 border-slate-300' : ''}">${t.done ? '<i data-lucide="check" class="w-3 h-3 text-white"></i>' : ''}</button>
+                    <div class="flex-1 min-w-0">
+                        <div class="text-sm truncate ${t.done ? 'line-through text-slate-400' : ''}">${t.text}</div>
+                        <div class="text-[10px] text-slate-400 flex items-center gap-2">
+                            <span>${t.owner.roleName} · ${epTitle}</span>
+                            ${t.link ? '<i data-lucide="paperclip" class="w-3 h-3 text-blue-400"></i>' : ''}
+                            ${t.comments?.length > 0 ? `<span class="flex items-center gap-0.5"><i data-lucide="message-circle" class="w-3 h-3"></i> ${t.comments.length}</span>` : ''}
+                        </div>
+                    </div>
+                    ${canManage ? `<div class="flex gap-1 opacity-0 group-hover/task:opacity-100 transition-opacity"><button onclick="event.stopPropagation(); prepareEditTask('${t.epId}', '${t.owner.id}', '${t.id}')" class="p-1 hover:text-blue-500"><i data-lucide="edit-2" class="w-3 h-3"></i></button><button onclick="event.stopPropagation(); handleDeleteTask('${t.epId}', '${t.owner.id}', '${t.id}')" class="p-1 hover:text-red-500"><i data-lucide="trash-2" class="w-3 h-3"></i></button></div>` : ''}
+                </div>`
+            }).join('')}</div></div></div>${canManage ? `<div class="bg-slate-900 dark:bg-stone-950 text-slate-200 rounded-xl p-6 shadow-xl flex flex-col border border-slate-800"><h3 class="text-sm font-bold text-white mb-1 flex items-center gap-2"><i data-lucide="command" class="text-blue-400 w-4 h-4"></i> 战术指令台</h3><div class="space-y-4 flex-1 mt-4"><div><label class="text-[10px] font-bold text-slate-500 uppercase">Target EP</label><div class="grid grid-cols-3 gap-2 mt-1">${Object.keys(project.episodes).map(ep => `<button onclick="setCmdEp('${ep}')" class="text-xs py-2 rounded-lg border transition-all truncate ${window.state.cmdEp === ep ? 'bg-blue-600 border-blue-600 text-white' : 'bg-slate-800 border-slate-700 text-slate-400'}">${project.episodes[ep].title}</button>`).join('')}</div></div><div><label class="text-[10px] font-bold text-slate-500 uppercase">Target Member</label><select onchange="window.state.cmdMemberId = this.value" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-xs outline-none mt-1"><option value="">◎ 默认：公共/待定任务</option>${assignableMembers.map(s => `<option value="${s.id}" ${window.state.cmdMemberId === s.id ? 'selected':''}>[${s.type}] ${s.roleName} - ${s.cvName}</option>`).join('')}</select></div><div><label class="text-[10px] font-bold text-slate-500 uppercase">Directive</label><textarea oninput="window.state.cmdText = this.value" placeholder="输入任务指令..." class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-3 text-xs outline-none mt-1 h-24 resize-none">${window.state.cmdText}</textarea></div><div><label class="text-[10px] font-bold text-slate-500 uppercase">Attachment Link</label><div class="flex items-center gap-2 mt-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2"><i data-lucide="paperclip" class="w-4 h-4 text-slate-500"></i><input oninput="window.state.cmdLink = this.value" placeholder="粘贴文档/音频链接..." class="w-full bg-transparent text-xs outline-none text-slate-300"></div></div><div><label class="text-[10px] font-bold text-slate-500 uppercase">Deadline</label><input type="date" onchange="window.state.cmdDDL = this.value" value="${window.state.cmdDDL}" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs outline-none mt-1"></div></div><button onclick="handleQuickAssign()" class="mt-6 w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2 shadow-lg shadow-blue-900/30 active:scale-95"><i data-lucide="send" class="w-4 h-4"></i> 下达指令</button></div>` : ''}</div>`;
+        }
+
+        const renderEpisodeView = (episode, project) => {
+            let list = [...episode.members];
+            if (window.state.searchText) {
+                const q = window.state.searchText.toLowerCase();
+                list = list.filter(m => m.roleName.toLowerCase().includes(q) || m.cvName.toLowerCase().includes(q));
+            }
+            if (window.state.filterType !== 'ALL') list = list.filter(m => m.type === window.state.filterType);
+            if (window.state.filterStatus !== 'ALL') {
+                if (window.state.filterStatus === 'UNFINISHED') list = list.filter(m => m.status !== 'completed');
+                else list = list.filter(m => m.status === window.state.filterStatus);
+            }
+            if (window.state.onlyUnsubmitted) list = list.filter(m => m.type === 'CAST' && (m.status === 'recording' || m.status === 'revising'));
+            if (window.state.filterType === 'CAST' && window.state.filterCastType !== 'ALL') list = list.filter(m => m.castType === window.state.filterCastType);
+
+            const isPrivileged = canManageProject(window.state.currentUser);
+            const canAdd = canAddMember(window.state.currentUser);
+            const canOrder = canReorder(window.state.currentUser) && window.state.filterType === 'ALL' && !window.state.searchText && !window.state.isSelectionMode;
+            const statusConfig = EP_LIFECYCLE[episode.status || 'scripting'];
+            const epKeys = Object.keys(project.episodes);
+            const isFirstEp = epKeys.length > 0 && epKeys[0] === episode.id;
+            const canImport = canAdd && !isFirstEp;
+            const canManage = checkPermission(window.state.currentUser, {type: 'CAST'}).canEdit;
+
+            const memberItems = list.map((m, index) => {
+                const perms = checkPermission(window.state.currentUser, m);
+                const isSelected = window.state.selectedMemberIds.includes(m.id);
+
+                const statusHtml = perms.canEdit && !window.state.isSelectionMode ? `
+                    <div class="relative group/status" onclick="event.stopPropagation()">
+                        <select onchange="updateMemberStatus('${episode.id}', '${m.id}', this.value)" class="appearance-none cursor-pointer flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold ${STATUS_CONFIG[m.status].color} whitespace-nowrap bg-opacity-10 outline-none pr-6 hover:bg-opacity-20 transition-all">
+                            ${Object.entries(STATUS_CONFIG).map(([k, v]) => `<option value="${k}" ${m.status === k ? 'selected' : ''}>${v.label}</option>`).join('')}
+                        </select>
+                        <i data-lucide="chevron-down" class="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 opacity-50 pointer-events-none"></i>
+                    </div>` 
+                    : renderStatusBadge(m.status);
+
+                const castTypeHtml = (m.type === 'CAST' && m.castType && perms.canEdit && !window.state.isSelectionMode) ? `
+                    <div class="relative group/castType pointer-events-auto" onclick="event.stopPropagation()">
+                         <select onchange="updateMemberCastType('${episode.id}', '${m.id}', this.value)" class="appearance-none cursor-pointer inline-block pl-2 pr-5 py-0.5 rounded border ${CAST_TYPES[m.castType].color} bg-transparent outline-none text-[9px] font-bold transition-all hover:bg-opacity-50">
+                            ${Object.entries(CAST_TYPES).map(([k, v]) => `<option value="${k}" ${m.castType === k ? 'selected' : ''}>${v.label}</option>`).join('')}
+                        </select>
+                        <i data-lucide="chevron-down" class="absolute right-1 top-1/2 -translate-y-1/2 w-2.5 h-2.5 opacity-50 pointer-events-none ${CAST_TYPES[m.castType].color.split(' ')[0]}"></i>
+                    </div>
+                ` : (m.type === 'CAST' && m.castType ? `<span class="text-[9px] px-1.5 rounded border ${CAST_TYPES[m.castType].color}">${CAST_TYPES[m.castType].label}</span>` : '');
+
+                const dragAttrs = canOrder ? `
+                    draggable="true"
+                    ondragstart="handleDragStart(event, ${index})"
+                    ondragover="handleDragOver(event)"
+                    ondrop="handleDrop(event, ${index})"
+                ` : '';
+                
+                const onClickAction = window.state.isSelectionMode 
+                    ? `toggleMemberSelection('${m.id}')` 
+                    : `openEditMember('${m.id}')`;
+
+                const displayName = (m.roleName && m.roleName.length > 0) ? m.roleName[0] : '?';
+
+                return `
+                <div ${dragAttrs} onclick="${onClickAction}" class="bg-white dark:bg-[#16181a] border ${isSelected ? 'border-blue-500 ring-1 ring-blue-500 bg-blue-50/10 dark:bg-blue-900/10' : 'border-slate-200 dark:border-stone-800'} hover:border-blue-300 dark:hover:border-stone-600 rounded-xl p-4 transition-all shadow-sm group/card relative cursor-pointer ${window.state.draggedMemberIndex === index ? 'draggable-source' : ''}">
+                    <div class="flex justify-between items-start">
+                        <div class="flex items-center gap-4 flex-1 pointer-events-none">
+                            ${window.state.isSelectionMode ? `
+                            <div class="checkbox-wrapper w-5 h-5 border-2 border-slate-300 dark:border-stone-600 rounded flex items-center justify-center transition-colors ${isSelected ? 'bg-blue-600 border-blue-600' : ''}">
+                                ${isSelected ? '<i data-lucide="check" class="w-3.5 h-3.5 text-white"></i>' : ''}
+                            </div>
+                            ` : (canOrder ? `<div class="drag-handle text-slate-300 hover:text-slate-500 -ml-1 pointer-events-auto" title="按住拖拽排序" onmousedown="event.stopPropagation()"><i data-lucide="grip-vertical" class="w-4 h-4"></i></div>` : '')}
+                            
+                            <div class="w-10 h-10 rounded-full ${m.avatarColor} flex items-center justify-center text-white font-bold">${displayName}</div>
+                            <div>
+                                <div class="flex items-center gap-2"><span class="text-sm font-bold dark:text-stone-200">${m.roleName || '未命名'}</span><span class="text-[10px] px-1.5 rounded border ${m.type === 'CAST' ? 'border-blue-200 text-blue-600' : 'border-purple-200 text-purple-600'}">${m.type}</span>${castTypeHtml}</div>
+                                <div class="text-xs text-slate-500 mt-1">${m.cvName || '待定'}</div>
+                            </div>
+                        </div>
+                        <div class="flex flex-col items-end gap-1.5 relative z-10 pointer-events-auto">
+                            ${statusHtml}
+                            ${(perms.canEdit && !window.state.isSelectionMode) ? `
+                            <div class="flex items-center gap-1 opacity-0 group-hover/card:opacity-100 transition-opacity bg-white dark:bg-stone-900 border border-slate-200 dark:border-stone-800 rounded-lg p-1 shadow-lg absolute right-0 top-8 z-20">
+                                <button onclick="event.stopPropagation(); cloneMember('${m.id}')" class="p-1.5 text-slate-500 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded" title="克隆角色"><i data-lucide="copy-plus" class="w-3 h-3"></i></button>
+                                <button onclick="event.stopPropagation(); copyMemberData('${m.id}')" class="p-1.5 text-slate-500 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 rounded" title="复制JSON数据"><i data-lucide="clipboard-copy" class="w-3 h-3"></i></button>
+                                <div class="w-px h-3 bg-slate-200 dark:bg-stone-700 mx-0.5"></div>
+                                <button onclick="event.stopPropagation(); handleDeleteMember('${m.id}')" class="p-1.5 text-slate-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded" title="删除"><i data-lucide="trash-2" class="w-3 h-3"></i></button>
+                            </div>` : ''}
+                            ${m.ddl ? `<div class="text-[10px] text-slate-400 flex items-center gap-1"><i data-lucide="clock" class="w-3 h-3"></i> ${m.ddl}</div>` : ''}
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+
+            return `
+            <div class="animate-in">
+                <div class="bg-white dark:bg-stone-900/50 border border-slate-200 dark:border-stone-800 p-4 rounded-xl mb-6 flex flex-col md:flex-row justify-between items-center gap-4">
+                    <div class="flex items-center gap-4">
+                        <div class="flex flex-col">
+                            <div class="flex items-center gap-2">
+                                <h3 class="text-xl font-bold">${episode.title}</h3>
+                                ${isPrivileged ? `<button onclick="openEditEp('${episode.id}')" class="text-slate-400 hover:text-blue-500 transition-colors p-1"><i data-lucide="edit-3" class="w-4 h-4"></i></button>` : ''}
+                                <button onclick="copyEpisodeLink()" class="text-slate-400 hover:text-emerald-500 transition-colors p-1"><i data-lucide="link" class="w-4 h-4"></i></button>
+                            </div>
+                            <span class="text-xs text-slate-500 mt-1">Status Protocol</span>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        ${isPrivileged ? `<select onchange="updateEpStatus('${episode.id}', this.value)" class="bg-slate-100 dark:bg-stone-800 border border-slate-200 dark:border-stone-700 text-xs font-bold px-3 py-2 rounded-lg outline-none cursor-pointer hover:bg-slate-200">${Object.keys(EP_LIFECYCLE).map(k => `<option value="${k}" ${episode.status === k ? 'selected' : ''}>${EP_LIFECYCLE[k].label}</option>`).join('')}</select>` : `<div class="px-3 py-2 rounded-lg text-xs font-bold border border-transparent ${statusConfig.color}">${statusConfig.label}</div>`}
+                        <div class="h-6 w-px bg-slate-200 dark:bg-stone-700 mx-1"></div>
+                        <button onclick="window.state.showCredits = true; render();" class="flex items-center gap-1.5 bg-slate-100 dark:bg-stone-800 px-3 py-2 rounded-lg text-xs font-bold hover:bg-slate-200"><i data-lucide="file-text" class="w-4 h-4"></i></button>
+                        ${canImport ? `<button onclick="importMembersFromFirstEp()" class="bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 px-3 py-2 rounded-lg text-xs font-bold hover:bg-purple-200 flex items-center gap-1"><i data-lucide="copy" class="w-3 h-3"></i> 复刻阵容</button>` : ''}
+                        ${canAdd ? `<button onclick="prepareNewMember()" class="bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-bold hover:bg-blue-500"><i data-lucide="plus" class="w-4 h-4"></i></button>` : ''}
+                    </div>
+                </div>
+
+                <div class="flex flex-col sm:flex-row gap-4 mb-4 justify-between items-center">
+                    <div class="flex gap-2 items-center flex-wrap">
+                        <div class="flex bg-slate-100 dark:bg-stone-900 p-1 rounded-lg">
+                            ${['ALL', 'STAFF', 'CAST'].map(f => `<button onclick="window.state.filterType='${f}'; render();" class="px-3 py-1.5 rounded-md text-xs font-bold transition-all ${window.state.filterType === f ? 'bg-slate-800 text-white dark:bg-white dark:text-black' : 'text-slate-500 hover:text-slate-800'}">${f === 'ALL' ? '全部' : f}</button>`).join('')}
+                        </div>
+                        ${window.state.filterType === 'CAST' ? `<div class="relative"><select onchange="window.state.filterCastType = this.value; render();" class="appearance-none bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg pl-3 pr-8 py-1.5 text-xs font-bold text-blue-600 dark:text-blue-400 outline-none cursor-pointer"><option value="ALL">全部位阶</option>${Object.entries(CAST_TYPES).map(([k, v]) => `<option value="${k}" ${window.state.filterCastType === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select><i data-lucide="chevron-down" class="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-blue-400 pointer-events-none"></i></div>` : ''}
+                        
+                        <div class="relative">
+                            <select onchange="window.state.filterStatus = this.value; render();" class="appearance-none bg-slate-100 dark:bg-stone-900 border border-slate-200 dark:border-stone-800 rounded-lg pl-3 pr-8 py-1.5 text-xs font-bold text-slate-600 dark:text-stone-400 outline-none focus:border-blue-500 cursor-pointer">
+                                <option value="ALL" ${window.state.filterStatus === 'ALL' ? 'selected' : ''}>📌 全部状态</option>
+                                <option value="UNFINISHED" ${window.state.filterStatus === 'UNFINISHED' ? 'selected' : ''}>⚡ 未完成 (进行中)</option>
+                                <option disabled>──────────</option>
+                                ${Object.entries(STATUS_CONFIG).map(([k, v]) => `<option value="${k}" ${window.state.filterStatus === k ? 'selected' : ''}>${v.label}</option>`).join('')}
+                            </select>
+                            <i data-lucide="chevron-down" class="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400 pointer-events-none"></i>
+                        </div>
+                        
+                        <button onclick="window.state.onlyUnsubmitted=!window.state.onlyUnsubmitted; render();" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${window.state.onlyUnsubmitted ? 'bg-red-50 text-red-600 border-red-200' : 'text-slate-500 border-transparent hover:bg-slate-100'}">只看未交音(Cast)</button>
+
+                        ${canManage ? `
+                        <div class="w-px h-4 bg-slate-300 dark:bg-stone-700 mx-1"></div>
+                        <button onclick="toggleSelectionMode()" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${window.state.isSelectionMode ? 'bg-indigo-600 text-white' : 'bg-white dark:bg-stone-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-stone-800'}">
+                            <i data-lucide="${window.state.isSelectionMode ? 'check-square' : 'square'}" class="w-3.5 h-3.5"></i> 
+                            ${window.state.isSelectionMode ? '退出多选' : '多选'}
+                        </button>` : ''}
+                    </div>
+                    
+                    <div class="relative w-full sm:w-auto mt-2 sm:mt-0">
+                        <i data-lucide="search" class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400"></i>
+                        <input value="${window.state.searchText}" oninput="window.state.searchText = this.value; render()" placeholder="搜索..." class="w-full sm:w-40 bg-white dark:bg-stone-900 border border-slate-200 dark:border-stone-800 rounded-lg pl-8 pr-3 py-1.5 text-xs outline-none focus:border-blue-500">
+                    </div>
+                </div>
+
+                <div class="space-y-3 pb-20">
+                    ${list.length === 0 ? '<div class="text-center py-12 text-slate-400 text-sm italic">未找到匹配的档案</div>' : memberItems}
+                </div>
+                
+                ${window.state.isSelectionMode ? renderBatchActionBar(list) : ''}
+            </div>`;
+        }
+
+        const renderBatchActionBar = (currentList) => {
+            const count = window.state.selectedMemberIds.length;
+            const allIds = currentList.map(m => m.id);
+            const isAllSelected = allIds.length > 0 && allIds.every(id => window.state.selectedMemberIds.includes(id));
+            
+            return `
+            <div class="fixed bottom-6 left-1/2 -translate-x-1/2 z-[80] w-[90%] max-w-3xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-2xl shadow-2xl p-3 flex items-center justify-between gap-4 animate-slide-up border border-slate-700/50">
+                <div class="flex items-center gap-4 pl-2">
+                    <button onclick="toggleSelectAll('${allIds.join(',')}')" class="flex items-center gap-2 text-xs font-bold opacity-80 hover:opacity-100">
+                        <div class="w-4 h-4 border-2 border-current rounded flex items-center justify-center">
+                            ${isAllSelected ? '<i data-lucide="check" class="w-3 h-3"></i>' : ''}
+                        </div>
+                        ${isAllSelected ? '全不选' : '全选'}
+                    </button>
+                    <div class="h-4 w-px bg-white/20 dark:bg-black/20"></div>
+                    <div class="text-sm font-bold">已选 ${count} 项</div>
+                </div>
+                
+                <div class="flex items-center gap-2">
+                    ${count > 0 ? `
+                    <div class="relative group">
+                        <button onclick="window.state.showBatchMenu = !window.state.showBatchMenu; window.state.showBatchCastTypeMenu = false; render();" class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors">
+                            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> 状态变更
+                        </button>
+                        ${window.state.showBatchMenu ? `
+                        <div class="absolute bottom-full right-0 mb-2 w-40 bg-white dark:bg-stone-800 rounded-xl shadow-xl border border-slate-200 dark:border-stone-700 overflow-hidden animate-pop-in z-50">
+                            ${Object.entries(STATUS_CONFIG).map(([k, v]) => `
+                                <button onclick="handleBatchStatusChange('${k}')" class="w-full text-left px-4 py-3 text-xs hover:bg-slate-100 dark:hover:bg-stone-700 flex items-center gap-2 dark:text-stone-300 border-b dark:border-stone-700/50 last:border-0">
+                                    <span class="w-2 h-2 rounded-full ${v.color.split(' ')[0]} bg-current"></span> ${v.label}
+                                </button>
+                            `).join('')}
+                        </div>
+                        ` : ''}
+                    </div>
+
+                    <div class="relative group">
+                        <button onclick="window.state.showBatchCastTypeMenu = !window.state.showBatchCastTypeMenu; window.state.showBatchMenu = false; render();" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors">
+                            <i data-lucide="users" class="w-3.5 h-3.5"></i> 位阶变更
+                        </button>
+                        ${window.state.showBatchCastTypeMenu ? `
+                        <div class="absolute bottom-full right-0 mb-2 w-40 bg-white dark:bg-stone-800 rounded-xl shadow-xl border border-slate-200 dark:border-stone-700 overflow-hidden animate-pop-in z-50">
+                            ${Object.entries(CAST_TYPES).map(([k, v]) => `
+                                <button onclick="handleBatchCastTypeChange('${k}')" class="w-full text-left px-4 py-3 text-xs hover:bg-slate-100 dark:hover:bg-stone-700 flex items-center gap-2 dark:text-stone-300 border-b dark:border-stone-700/50 last:border-0">
+                                    <span class="text-[9px] px-1.5 rounded border ${v.color}">${v.label}</span>
+                                </button>
+                            `).join('')}
+                        </div>
+                        ` : ''}
+                    </div>
+                    
+                    <button onclick="handleBatchDelete()" class="bg-red-600 hover:bg-red-500 text-white px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors">
+                        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                    </button>
+                    ` : ''}
+                    
+                    <button onclick="toggleSelectionMode()" class="p-2 hover:bg-white/10 dark:hover:bg-black/10 rounded-lg transition-colors">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+            </div>`;
+        }
+
+        const renderStatusBadge = (status) => {
+             const conf = STATUS_CONFIG[status] || STATUS_CONFIG['pending'];
+             return `<div class="px-2 py-1 rounded-md text-[10px] font-bold border ${conf.color}">${conf.label}</div>`;
+        }
+
+        const renderDetailModal = () => { 
+            let member, perms; 
+            if (window.state.editingMemberId === 'NEW') { 
+                member = { id: 'NEW', ...tempNewMember }; 
+                perms = { canEdit: true, canDelete: false, canAdd: true }; 
+            } else { 
+                const project = window.state.projects[window.state.activeProjectId]; 
+                member = Object.values(project.episodes).flatMap(e => e.members).find(m => m.id === window.state.editingMemberId); 
+                if (!member) return ''; 
+                perms = checkPermission(window.state.currentUser, member); 
+            } 
+            const canCreateStaffType = canCreateStaff(window.state.currentUser); 
+            
+            return `<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"><div class="bg-white dark:bg-[#1a1c1e] border border-slate-200 dark:border-stone-700 w-full max-w-xl rounded-xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden animate-in">
+                <div class="px-5 py-4 border-b border-slate-100 dark:border-stone-700 flex justify-between items-center bg-slate-50 dark:bg-[#232527]">
+                    <div class="flex items-center gap-3">
+                        <div class="w-12 h-12 rounded-full ${member.avatarColor} flex items-center justify-center text-white font-bold text-lg">${member.roleName[0] || '?'}</div>
+                        <div>
+                            <input ${!perms.canEdit ? 'disabled' : ''} onchange="updateMemberField('roleName', this.value)" value="${member.roleName}" placeholder="角色名" class="bg-transparent font-bold text-lg outline-none w-32 focus:border-b border-blue-500">
+                            ${window.state.editingMemberId === 'NEW' ? `<select onchange="updateMemberField('type', this.value)" class="mt-1 block text-[10px] bg-transparent border border-slate-200 dark:border-stone-700 rounded px-1 py-0.5 outline-none font-bold text-blue-500"><option value="CAST" ${member.type === 'CAST' ? 'selected' : ''}>CAST</option>${canCreateStaffType ? `<option value="STAFF" ${member.type === 'STAFF' ? 'selected' : ''}>STAFF</option>` : ''}</select>` : `<div class="text-[10px] text-blue-500 font-bold uppercase mt-1 flex items-center gap-2">${member.type} ${member.type === 'CAST' ? `<select ${!perms.canEdit ? 'disabled' : ''} onchange="updateMemberField('castType', this.value)" class="bg-transparent border border-slate-200 dark:border-stone-700 rounded px-1 py-0.5 outline-none font-bold ${CAST_TYPES[member.castType]?.color || ''} cursor-pointer">${Object.entries(CAST_TYPES).map(([k, v]) => `<option value="${k}" ${member.castType === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select>` : ''}</div>`}
+                        </div>
+                    </div>
+                    <div class="flex gap-2">
+                        ${window.state.editingMemberId === 'NEW' ? `<button onclick="confirmAddMember()" class="px-4 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-bold shadow-lg">确认创建</button>` : (perms.canDelete ? `<button onclick="handleDeleteMember('${member.id}')" class="p-2 text-slate-400 hover:text-red-500"><i data-lucide="trash-2" class="w-5 h-5"></i></button>` : '')}
+                        <button onclick="window.state.editingMemberId = null; render();" class="p-2 text-slate-400 hover:text-black dark:hover:text-white"><i data-lucide="x" class="w-6 h-6"></i></button>
+                    </div>
+                </div>
+                
+                <div class="flex-1 overflow-y-auto p-5 space-y-6 custom-scrollbar">
+                    ${window.state.editingMemberId === 'NEW' ? `
+                    <div class="bg-indigo-50 dark:bg-indigo-900/10 border border-indigo-100 dark:border-indigo-900/30 p-3 rounded-lg mb-4">
+                        <label class="text-[10px] font-bold text-indigo-500 uppercase flex items-center gap-1 mb-2"><i data-lucide="zap" class="w-3 h-3"></i> 批量导入 / 智能速记</label>
+                        <div class="flex gap-2">
+                            <textarea id="smart-input-area" placeholder="格式支持：\n角色名 CV名\n角色名 CV名【社团名】" class="flex-1 bg-white dark:bg-stone-950 border border-indigo-200 dark:border-indigo-800 rounded-lg p-2 text-xs outline-none text-slate-700 dark:text-slate-300 h-24 resize-none focus:border-indigo-500 transition-colors"></textarea>
+                            <button onclick="handleSmartInput()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 rounded-lg text-xs font-bold flex flex-col items-center justify-center gap-1 min-w-[60px] shadow-sm"><i data-lucide="sparkles" class="w-4 h-4"></i> 识别</button>
+                        </div>
+                    </div>` : ''}
+
+                    <div class="bg-slate-50 dark:bg-stone-900/50 p-4 rounded-lg border border-slate-200 dark:border-stone-800 space-y-3">
+                        <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5"><i data-lucide="user" class="w-3 h-3"></i> 人员档案</h4>
+                        <div class="grid grid-cols-2 gap-3">
+                            <input ${!perms.canEdit ? 'disabled' : ''} onchange="updateMemberField('cvName', this.value)" value="${member.cvName}" placeholder="人员名称" class="bg-white dark:bg-stone-950 border border-slate-200 dark:border-stone-700 rounded px-2.5 py-2 text-sm outline-none">
+                            <input ${!perms.canEdit ? 'disabled' : ''} onchange="updateMemberField('society', this.value)" value="${member.society || ''}" placeholder="所属社团" class="bg-white dark:bg-stone-950 border border-slate-200 dark:border-stone-700 rounded px-2.5 py-2 text-sm outline-none">
+                            <input ${!perms.canEdit ? 'disabled' : ''} onchange="updateMemberField('weibo', this.value)" value="${member.weibo || ''}" placeholder="微博 ID" class="bg-white dark:bg-stone-950 border border-slate-200 dark:border-stone-700 rounded px-2.5 py-2 text-sm outline-none">
+                            <input ${!perms.canEdit ? 'disabled' : ''} onchange="updateMemberField('email', this.value)" value="${member.email || ''}" placeholder="邮箱地址" class="bg-white dark:bg-stone-950 border border-slate-200 dark:border-stone-700 rounded px-2.5 py-2 text-sm outline-none">
+                        </div>
+                        <div class="flex items-center gap-2 bg-white dark:bg-stone-950 border border-slate-200 dark:border-stone-700 rounded px-2.5 py-2 mt-2">
+                            <i data-lucide="link" class="text-blue-400 w-4 h-4"></i>
+                            <input ${!perms.canEdit ? 'disabled' : ''} onchange="updateMemberField('feedbackLink', this.value)" value="${member.feedbackLink || ''}" placeholder="粘贴意见文档/反馈链接..." class="bg-transparent text-sm w-full outline-none text-slate-700 dark:text-stone-300 placeholder-slate-400">
+                            ${member.feedbackLink ? `<a href="${member.feedbackLink}" target="_blank" class="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded font-bold hover:bg-blue-200">Go</a>` : ''}
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="space-y-1">
+                            <label class="text-xs font-bold text-slate-500">当前状态</label>
+                            <select ${!perms.canEdit ? 'disabled' : ''} onchange="updateMemberField('status', this.value)" class="w-full bg-white dark:bg-stone-950 border border-slate-200 dark:border-stone-700 rounded px-2 py-1.5 text-sm outline-none">
+                                ${Object.entries(STATUS_CONFIG).map(([key, val]) => `<option value="${key}" ${member.status === key ? 'selected' : ''}>${val.label}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div class="space-y-1">
+                            <label class="text-xs font-bold text-slate-500">Deadline</label>
+                            <input type="date" ${!perms.canEdit ? 'disabled' : ''} onchange="updateMemberField('ddl', this.value)" value="${member.ddl || ''}" class="w-full bg-white dark:bg-stone-950 border border-slate-200 dark:border-stone-700 rounded px-2 py-1.5 text-sm outline-none">
+                        </div>
+                    </div>
+                    
+                    <div class="space-y-3 pt-2 border-t border-slate-100 dark:border-stone-800">
+                        <h4 class="text-sm font-bold flex items-center gap-2"><i data-lucide="message-square" class="w-4 h-4 text-slate-400"></i> 会话式备注</h4>
+                        <div class="bg-slate-50 dark:bg-stone-900/50 rounded p-3 h-40 overflow-y-auto space-y-3 border border-slate-200 dark:border-stone-800">
+                            ${member.comments.length === 0 ? '<div class="text-center text-xs text-slate-400 py-4">暂无留言</div>' : member.comments.map(c => `<div class="flex flex-col items-start"><span class="text-[9px] text-slate-400 mb-0.5">${c.author} · ${c.timestamp}</span><span class="text-xs px-2 py-1.5 rounded bg-white dark:bg-stone-800 border border-slate-100 dark:border-stone-700 max-w-[90%] break-words">${c.content}</span></div>`).join('')}
+                        </div>
+                        <div class="flex gap-2">
+                            <input id="comment-input" placeholder="输入留言..." class="flex-1 bg-slate-100 dark:bg-stone-900 border border-slate-200 dark:border-stone-700 rounded-lg px-3 py-1 text-sm outline-none">
+                            <button onclick="handleAddComment()" class="bg-blue-600 text-white px-3 rounded-lg"><i data-lucide="send" class="w-4 h-4"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div></div>`; 
+        }
+
+        const renderTaskDetailModal = () => {
+            const { epId, memberId, taskId } = window.state.viewingTask;
+            const project = window.state.projects[window.state.activeProjectId];
+            const member = project.episodes[epId].members.find(m => m.id === memberId);
+            const task = member.tasks.find(t => t.id === taskId);
+            if (!task) return '';
+            const isEditingComment = !!window.state.editingCommentId;
+            return `
+            <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in">
+                <div class="bg-white dark:bg-[#1a1c1e] w-full max-w-lg rounded-2xl shadow-2xl p-6 border dark:border-stone-800 flex flex-col max-h-[85vh]">
+                    <div class="flex justify-between items-start mb-4 border-b border-slate-100 dark:border-stone-800 pb-4">
+                        <div>
+                            <div class="text-xs text-slate-400 mb-1">TASK DIRECTIVE</div>
+                            <h3 class="text-lg font-bold ${task.done ? 'line-through text-slate-400' : ''}">${task.text}</h3>
+                            ${task.link ? `<a href="${task.link}" target="_blank" class="flex items-center gap-1 text-xs text-blue-500 mt-2 hover:underline"><i data-lucide="link" class="w-3 h-3"></i> 查看附件</a>` : ''}
+                        </div>
+                        <button onclick="window.state.viewingTask=null; window.state.editingCommentId=null; render()" class="p-1 hover:bg-slate-100 dark:hover:bg-stone-800 rounded"><i data-lucide="x" class="w-5 h-5"></i></button>
+                    </div>
+                    <div id="task-chat-scroll" class="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar mb-4 bg-slate-50 dark:bg-stone-900/50 rounded-lg p-3">
+                        ${(!task.comments || task.comments.length === 0) ? '<div class="text-center text-xs text-slate-400 py-10">暂无反馈记录</div>' : 
+                            task.comments.map(c => {
+                                const isMyComment = c.author === window.state.currentUser.name;
+                                return `
+                                <div class="group relative flex flex-col items-start bg-white dark:bg-stone-800 p-2 rounded-lg border border-slate-100 dark:border-stone-700">
+                                    <div class="flex items-center gap-2 mb-1">
+                                        <span class="text-[10px] font-bold text-slate-500">${c.author}</span>
+                                        <span class="text-[9px] text-slate-300">${c.timestamp}</span>
+                                        ${c.isEdited ? '<span class="text-[8px] text-slate-300 italic">(已编辑)</span>' : ''}
+                                    </div>
+                                    <div class="text-xs text-slate-700 dark:text-stone-300 break-words w-full">${c.content}</div>
+                                    ${c.link ? `<a href="${c.link}" target="_blank" class="mt-1 text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded inline-block">🔗 反馈附件</a>` : ''}
+                                    ${isMyComment ? `<div class="absolute right-2 top-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity"><button onclick="prepareEditTaskComment('${c.id}')" class="p-1 hover:text-blue-500 rounded bg-white/80 dark:bg-stone-800/80 shadow-sm"><i data-lucide="edit-2" class="w-3 h-3"></i></button><button onclick="handleDeleteTaskComment('${c.id}')" class="p-1 hover:text-red-500 rounded bg-white/80 dark:bg-stone-800/80 shadow-sm"><i data-lucide="trash-2" class="w-3 h-3"></i></button></div>` : ''}
+                                </div>`
+                            }).join('')}
+                    </div>
+                    <div class="space-y-2 border-t border-slate-100 dark:border-stone-800 pt-3 relative">
+                        ${isEditingComment ? `<div class="absolute -top-6 left-0 text-xs text-amber-500 flex items-center gap-1 font-bold animate-pulse"><i data-lucide="edit-3" class="w-3 h-3"></i> 正在修改留言... <button onclick="cancelEditTaskComment()" class="ml-2 text-slate-400 hover:text-slate-600 underline font-normal">取消</button></div>` : ''}
+                        <input id="task-comment-link" placeholder="粘贴反馈链接 (可选)..." class="w-full bg-slate-100 dark:bg-stone-900 border border-slate-200 dark:border-stone-700 rounded-lg px-3 py-2 text-xs outline-none">
+                        <div class="flex gap-2">
+                            <input id="task-comment-text" placeholder="${isEditingComment ? '修改内容...' : '输入留言/反馈...'}" class="flex-1 bg-slate-100 dark:bg-stone-900 border border-slate-200 dark:border-stone-700 rounded-lg px-3 py-2 text-xs outline-none" onkeydown="if(event.key==='Enter') handleAddTaskComment()">
+                            <button onclick="handleAddTaskComment()" class="${isEditingComment ? 'bg-amber-500 hover:bg-amber-600' : 'bg-blue-600 hover:bg-blue-500'} text-white px-4 rounded-lg flex items-center justify-center transition-colors">
+                                <i data-lucide="${isEditingComment ? 'save' : 'send'}" class="w-4 h-4"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+        }
+
+        const renderEditTaskModal = () => `<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in"><div class="bg-white dark:bg-[#1a1c1e] w-full max-w-md rounded-2xl shadow-2xl p-6 border dark:border-stone-800"><h3 class="text-lg font-bold mb-4">修改指令</h3><div class="space-y-4"><div><label class="text-[10px] font-bold text-slate-400">指令内容</label><input id="edit-task-text" value="${window.state.editingTask ? window.state.projects[window.state.activeProjectId].episodes[window.state.editingTask.epId].members.find(m => m.id === window.state.editingTask.memberId).tasks.find(t => t.id === window.state.editingTask.taskId).text : ''}" class="w-full mt-1 bg-slate-100 dark:bg-stone-900 border dark:border-stone-700 rounded-xl px-3 py-2 outline-none"></div><div><label class="text-[10px] font-bold text-slate-400">附件链接</label><input id="edit-task-link" value="${window.state.editingTask ? (window.state.projects[window.state.activeProjectId].episodes[window.state.editingTask.epId].members.find(m => m.id === window.state.editingTask.memberId).tasks.find(t => t.id === window.state.editingTask.taskId).link || '') : ''}" class="w-full mt-1 bg-slate-100 dark:bg-stone-900 border dark:border-stone-700 rounded-xl px-3 py-2 outline-none"></div><div><label class="text-[10px] font-bold text-slate-400">截止日期</label><input id="edit-task-ddl" type="date" value="${window.state.editingTask ? (window.state.projects[window.state.activeProjectId].episodes[window.state.editingTask.epId].members.find(m => m.id === window.state.editingTask.memberId).tasks.find(t => t.id === window.state.editingTask.taskId).ddl || '') : ''}" class="w-full mt-1 bg-slate-100 dark:bg-stone-900 border dark:border-stone-700 rounded-xl px-3 py-2 outline-none"></div></div><div class="flex gap-3 mt-6"><button onclick="window.state.showEditTaskModal=false; render()" class="flex-1 py-2 text-sm text-slate-400">取消</button><button onclick="handleSaveTaskEdit()" class="flex-1 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold">保存</button></div></div></div>`;
+        const renderNewProjectModal = () => `<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in"><div class="bg-white dark:bg-[#1a1c1e] w-full max-w-md rounded-2xl shadow-2xl p-6 border dark:border-stone-800"><h3 class="text-lg font-bold mb-4 flex items-center gap-2"><i data-lucide="plus" class="w-5 h-5 text-blue-500"></i> 创建新剧集项目</h3><div class="space-y-4"><div><label class="text-[10px] font-bold text-slate-400 uppercase">项目名称</label><input id="new-proj-name" class="w-full mt-1 bg-slate-50 dark:bg-stone-900 border dark:border-stone-800 rounded-xl px-4 py-2.5 outline-none focus:ring-2 ring-blue-500/20"></div><div><label class="text-[10px] font-bold text-slate-400 uppercase">项目描述</label><input id="new-proj-desc" class="w-full mt-1 bg-slate-50 dark:bg-stone-900 border dark:border-stone-800 rounded-xl px-4 py-2.5 outline-none"></div><div><label class="text-[10px] font-bold text-slate-400 uppercase">主题色调</label><select id="new-proj-color" class="w-full mt-1 bg-slate-50 dark:bg-stone-900 border dark:border-stone-800 rounded-xl px-4 py-2.5 outline-none"><option value="from-blue-600 to-cyan-600">极光蓝</option><option value="from-purple-600 to-pink-600">星云紫</option><option value="from-emerald-600 to-teal-600">翡翠绿</option><option value="from-amber-600 to-orange-600">熔岩橙</option></select></div></div><div class="flex gap-3 mt-8"><button onclick="window.state.showNewProjectModal=false; render();" class="flex-1 py-3 text-sm font-bold text-slate-400">取消</button><button onclick="handleAddProject()" class="flex-1 py-3 bg-blue-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-500/20">立即创建</button></div></div></div>`;
+        const renderEditProjectModal = () => { const project = window.state.projects[window.state.editingProjectId]; return `<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in"><div class="bg-white dark:bg-[#1a1c1e] w-full max-w-md rounded-2xl shadow-2xl p-6 border dark:border-stone-800"><h3 class="text-lg font-bold mb-4 flex items-center gap-2">修改剧集信息</h3><div class="space-y-4"><div><label class="text-[10px] font-bold text-slate-400 uppercase">项目名称</label><input id="edit-proj-name" value="${project.name}" class="w-full mt-1 bg-slate-50 dark:bg-stone-900 border dark:border-stone-800 rounded-xl px-4 py-2.5 outline-none focus:ring-2 ring-blue-500/20"></div><div><label class="text-[10px] font-bold text-slate-400 uppercase">项目描述</label><input id="edit-proj-desc" value="${project.description}" class="w-full mt-1 bg-slate-50 dark:bg-stone-900 border dark:border-stone-800 rounded-xl px-4 py-2.5 outline-none"></div><div><label class="text-[10px] font-bold text-slate-400 uppercase">主题色调</label><select id="edit-proj-color" class="w-full mt-1 bg-slate-50 dark:bg-stone-900 border dark:border-stone-800 rounded-xl px-4 py-2.5 outline-none"><option value="from-blue-600 to-cyan-600" ${project.themeColor.includes('blue')?'selected':''}>极光蓝</option><option value="from-purple-600 to-pink-600" ${project.themeColor.includes('purple')?'selected':''}>星云紫</option><option value="from-emerald-600 to-teal-600" ${project.themeColor.includes('emerald')?'selected':''}>翡翠绿</option><option value="from-amber-600 to-orange-600" ${project.themeColor.includes('amber')?'selected':''}>熔岩橙</option></select></div></div><div class="mt-8 flex flex-col gap-3"><button onclick="handleUpdateProject()" class="w-full py-3 bg-blue-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-500/20">保存修改</button><div class="flex gap-3"><button onclick="window.state.showEditProjectModal=false; render();" class="flex-1 py-3 text-sm font-bold text-slate-400 bg-slate-100 dark:bg-stone-900 rounded-xl">取消</button><button type="button" onclick="handleDeleteProject()" class="flex-1 py-3 text-sm font-bold text-red-600 bg-red-50 dark:bg-red-900/20 rounded-xl hover:bg-red-100">删除项目</button></div></div></div></div>`; }
+        const renderNewEpModal = () => `<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in"><div class="bg-white dark:bg-[#1a1c1e] w-full max-w-sm rounded-2xl shadow-2xl p-6 border dark:border-stone-800"><h3 class="text-lg font-bold mb-4">创建新时间线 (Episode)</h3><input id="new-ep-title" placeholder="例如：第三期：风暴前夕" class="w-full bg-slate-50 dark:bg-stone-900 border dark:border-stone-800 rounded-xl px-4 py-3 outline-none focus:ring-2 ring-blue-500/20"><div class="flex gap-3 mt-6"><button onclick="window.state.showNewEpModal=false; render();" class="flex-1 py-2 text-sm text-slate-400">取消</button><button onclick="handleAddEpisode()" class="flex-1 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold">创建</button></div></div></div>`;
+        const renderEditEpModal = () => { const ep = window.state.projects[window.state.activeProjectId].episodes[window.state.editingEpId]; return `<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in"><div class="bg-white dark:bg-[#1a1c1e] w-full max-w-sm rounded-2xl shadow-2xl p-6 border dark:border-stone-800"><div class="flex justify-between items-center mb-4"><h3 class="text-lg font-bold">管理剧集信息</h3><button type="button" onclick="handleDeleteEpisode()" class="text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-2 rounded-lg transition-colors"><i data-lucide="trash-2" class="w-4 h-4"></i></button></div><input id="edit-ep-title" value="${ep.title.replace(/"/g, '&quot;')}" class="w-full bg-slate-50 dark:bg-stone-900 border dark:border-stone-800 rounded-xl px-4 py-3 outline-none focus:ring-2 ring-blue-500/20"><div class="flex gap-3 mt-6"><button onclick="window.state.showEditEpModal=false; render();" class="flex-1 py-2 text-sm text-slate-400">取消</button><button onclick="handleUpdateEpisode()" class="flex-1 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold">保存修改</button></div></div></div>`; }
+        const renderCreditsModal = () => { const ep = window.state.projects[window.state.activeProjectId].episodes[window.state.dashboardView]; const text = `====== ${ep.title} 制作组名单 ======\n\n【STAFF】\n` + ep.members.filter(m => m.type === 'STAFF').map(m => `${m.roleName}：${m.cvName}${m.society ? `【${m.society}】` : ''}`).join('\n') + `\n\n【CAST】\n` + ep.members.filter(m => m.type === 'CAST').map(m => `${m.roleName}：${m.cvName}${m.society ? `【${m.society}】` : ''}`).join('\n'); return `<div class="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"><div class="bg-white dark:bg-[#1a1c1e] w-full max-w-lg rounded-xl shadow-2xl overflow-hidden animate-in"><div class="px-5 py-4 border-b dark:border-stone-700 flex justify-between items-center bg-slate-50 dark:bg-[#232527]"><h3 class="font-bold flex items-center gap-2"><i data-lucide="file-text" class="w-5 h-5"></i> 演职员表生成</h3><button onclick="window.state.showCredits = false; render();"><i data-lucide="x" class="w-5 h-5"></i></button></div><div class="p-5"><textarea readonly class="w-full h-64 bg-slate-50 dark:bg-stone-950 border dark:border-stone-700 rounded-lg p-3 text-xs font-mono outline-none">${text}</textarea><button onclick="navigator.clipboard.writeText(\`${text}\`); showToast('已复制到剪贴板', 'success')" class="mt-4 w-full bg-blue-600 text-white py-2 rounded-lg font-bold">一键复制</button></div></div></div>`; }
+
+        // ==========================================
+        // 4. 事件处理器 (Handlers)
+        // ==========================================
+        window.toggleTheme = () => { window.state.theme = window.state.theme === 'light' ? 'dark' : 'light'; saveState(); render(); };
+        window.handleLogin = () => {
+            const input = document.getElementById('login-input').value.toLowerCase();
+            if (input === 'staff') {
+                window.state.loginStep = 'ROLE_SELECT';
+                render();
+                return;
+            }
+            const u = MOCK_USERS[input];
+            if (u) { window.state.currentUser = u; saveState(); render(); }
+            else showToast('身份未识别', 'error');
+        };
+        
+        window.handleStaffRoleSelect = (roleName) => {
+            window.state.currentUser = {
+                id: 'staff-' + generateId(),
+                name: '【' + roleName + '】',
+                role: 'STAFF_MEMBER',
+                avatarColor: 'bg-stone-600'
+            };
+            saveState();
+            render();
+        };
+
+        window.handleGuestLogin = () => { window.state.currentUser = GUEST_USER; saveState(); render(); };
+        window.handleLogout = () => { window.state.currentUser = null; window.state.loginStep = 'KEY'; saveState(); render(); };
+        
+        window.selectProject = (id) => { 
+            window.state.activeProjectId = id; 
+            window.state.dashboardView = 'OVERVIEW'; 
+            render(); 
+        };
+        
+        window.setDashboardView = (v) => { window.state.dashboardView = v; render(); };
+        window.setCmdEp = (ep) => { window.state.cmdEp = ep; window.state.cmdMemberId = ''; render(); };
+        
+        window.prepareNewMember = () => {
+            tempNewMember = { roleName: '', cvName: '', type: 'CAST', status: 'recording', castType: 'MAIN', avatarColor: 'bg-blue-500', comments: [], tasks: [], feedbackLink: '', weibo: '', email: '', society: '' };
+            window.state.editingMemberId = 'NEW';
+            render();
+        };
+
+        window.updateMemberField = (field, value) => {
+            if (window.state.editingMemberId === 'NEW') {
+                tempNewMember[field] = value;
+                if (field === 'type') {
+                    tempNewMember.status = value === 'STAFF' ? 'pending' : 'recording';
+                    tempNewMember.avatarColor = value === 'STAFF' ? 'bg-stone-500' : 'bg-blue-500';
+                    render();
+                }
+                if (field === 'castType') {
+                    tempNewMember.castType = value;
+                    render();
+                }
+            } else {
+                const project = window.state.projects[window.state.activeProjectId];
+                const member = Object.values(project.episodes).flatMap(e => e.members).find(m => m.id === window.state.editingMemberId);
+                if (member) { member[field] = value; saveState(); }
+            }
+        };
+
+        window.updateMemberStatus = (epId, memberId, newStatus) => {
+            const project = window.state.projects[window.state.activeProjectId];
+            const member = project.episodes[epId].members.find(m => m.id === memberId);
+            if (member) {
+                member.status = newStatus;
+                saveState();
+                render();
+                showToast(`状态已更新：${STATUS_CONFIG[newStatus].label}`, 'success');
+            }
+        };
+
+        window.updateMemberCastType = (epId, memberId, newCastType) => {
+            const project = window.state.projects[window.state.activeProjectId];
+            const member = project.episodes[epId].members.find(m => m.id === memberId);
+            if (member) {
+                member.castType = newCastType;
+                saveState();
+                render();
+                showToast(`位阶已调整：${CAST_TYPES[newCastType].label}`, 'success');
+            }
+        };
+
+        window.toggleSelectionMode = () => {
+            window.state.isSelectionMode = !window.state.isSelectionMode;
+            window.state.selectedMemberIds = []; 
+            window.state.showBatchMenu = false;
+            window.state.showBatchCastTypeMenu = false;
+            render();
+        };
+
+        window.toggleMemberSelection = (id) => {
+            if (window.state.selectedMemberIds.includes(id)) {
+                window.state.selectedMemberIds = window.state.selectedMemberIds.filter(mid => mid !== id);
+            } else {
+                window.state.selectedMemberIds.push(id);
+            }
+            render();
+        };
+
+        window.toggleSelectAll = (allIdsStr) => {
+            const allIds = allIdsStr.split(',');
+            const isAllSelected = allIds.length > 0 && allIds.every(id => window.state.selectedMemberIds.includes(id));
+            if (isAllSelected) {
+                window.state.selectedMemberIds = [];
+            } else {
+                window.state.selectedMemberIds = allIds;
+            }
+            render();
+        };
+
+        window.handleBatchStatusChange = (newStatus) => {
+            if (window.state.selectedMemberIds.length === 0) return;
+            const ep = window.state.projects[window.state.activeProjectId].episodes[window.state.dashboardView];
+            
+            let count = 0;
+            ep.members.forEach(m => {
+                if (window.state.selectedMemberIds.includes(m.id)) {
+                    m.status = newStatus;
+                    count++;
+                }
+            });
+            
+            showToast(`${count} 个档案状态已更新`, 'success');
+            window.state.isSelectionMode = false;
+            window.state.selectedMemberIds = [];
+            window.state.showBatchMenu = false;
+            saveState();
+            render();
+        };
+
+        window.handleBatchCastTypeChange = (newType) => {
+            if (window.state.selectedMemberIds.length === 0) return;
+            const ep = window.state.projects[window.state.activeProjectId].episodes[window.state.dashboardView];
+            
+            let count = 0;
+            ep.members.forEach(m => {
+                if (window.state.selectedMemberIds.includes(m.id) && m.type === 'CAST') {
+                    m.castType = newType;
+                    count++;
+                }
+            });
+            
+            if (count > 0) {
+                showToast(`${count} 个角色位阶已变更`, 'success');
+                window.state.isSelectionMode = false;
+                window.state.selectedMemberIds = [];
+                window.state.showBatchCastTypeMenu = false;
+                saveState();
+                render();
+            } else {
+                showToast('未选中 CAST 类型角色', 'error');
+            }
+        };
+
+        window.handleBatchDelete = () => {
+            if (window.state.selectedMemberIds.length === 0) return;
+            showConfirm(`确定删除选中的 ${window.state.selectedMemberIds.length} 个档案？此操作不可恢复。`, () => {
+                const ep = window.state.projects[window.state.activeProjectId].episodes[window.state.dashboardView];
+                ep.members = ep.members.filter(m => !window.state.selectedMemberIds.includes(m.id));
+                
+                showToast('批量删除完成', 'success');
+                window.state.isSelectionMode = false;
+                window.state.selectedMemberIds = [];
+                window.state.showBatchMenu = false;
+                window.state.showBatchCastTypeMenu = false;
+                saveState();
+                render();
+            });
+        };
+
+        window.copyMemberData = (id) => {
+            const project = window.state.projects[window.state.activeProjectId];
+            const member = Object.values(project.episodes).flatMap(e => e.members).find(m => m.id === id);
+            if (!member) return;
+            const data = {
+                roleName: member.roleName,
+                cvName: member.cvName,
+                type: member.type,
+                castType: member.castType,
+                society: member.society,
+                weibo: member.weibo,
+                email: member.email,
+                feedbackLink: member.feedbackLink,
+                status: member.status
+            };
+            navigator.clipboard.writeText(JSON.stringify(data)).then(() => showToast('档案数据已复制', 'success'));
+        };
+
+        window.cloneMember = (id) => {
+            const ep = window.state.projects[window.state.activeProjectId].episodes[window.state.dashboardView];
+            const original = ep.members.find(m => m.id === id);
+            if (!original) return;
+            
+            const clone = { 
+                ...original, 
+                id: generateId(), 
+                roleName: original.roleName + ' (副本)', 
+                tasks: [],
+                comments: []
+            };
+            ep.members.push(clone);
+            saveState();
+            render();
+            showToast('角色已克隆', 'success');
+        };
+
+        window.handleDragStart = (e, index) => {
+            window.state.draggedMemberIndex = index;
+            setTimeout(() => {
+                const el = e.target;
+                el.classList.add('draggable-source');
+            }, 0);
+            e.dataTransfer.effectAllowed = 'move';
+        };
+
+        window.handleDragOver = (e) => {
+            e.preventDefault(); 
+            e.dataTransfer.dropEffect = 'move';
+            const card = e.target.closest('.group\\/card');
+            if (card) card.classList.add('drag-over');
+        };
+
+        window.handleDrop = (e, targetIndex) => {
+            e.preventDefault();
+            document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+            document.querySelectorAll('.draggable-source').forEach(el => el.classList.remove('draggable-source'));
+
+            if (window.state.draggedMemberIndex === null || window.state.draggedMemberIndex === targetIndex) {
+                window.state.draggedMemberIndex = null;
+                render();
+                return;
+            }
+
+            const ep = window.state.projects[window.state.activeProjectId].episodes[window.state.dashboardView];
+            const movedMember = ep.members.splice(window.state.draggedMemberIndex, 1)[0];
+            ep.members.splice(targetIndex, 0, movedMember);
+
+            window.state.draggedMemberIndex = null;
+            saveState();
+            render();
+            showToast('序列重构完成', 'success');
+        };
+
+        window.handleSmartInput = () => {
+            const text = document.getElementById('smart-input-area').value;
+            if (!text.trim()) return showToast('请输入内容', 'error');
+            
+            const lines = text.split('\n').filter(line => line.trim());
+            const ep = window.state.projects[window.state.activeProjectId].episodes[window.state.dashboardView];
+            
+            if (lines.length > 1) {
+                let count = 0;
+                lines.forEach(line => {
+                    let processedLine = line.trim();
+                    let society = '';
+                    const societyMatch = processedLine.match(/[【\[](.*?)[】\]]/);
+                    if (societyMatch) {
+                        society = societyMatch[1];
+                        processedLine = processedLine.replace(societyMatch[0], '').trim();
+                    }
+
+                    const parts = processedLine.split(/[\s,，]+/);
+                    if (parts.length >= 1) {
+                        const newMember = { 
+                            ...tempNewMember, 
+                            id: generateId(), 
+                            roleName: parts[0],
+                            cvName: parts.length >= 2 ? parts[1] : '待定',
+                            society: society
+                        };
+                        ep.members.push(newMember);
+                        count++;
+                    }
+                });
+                
+                if (count > 0) {
+                    showToast(`批量创建了 ${count} 个角色档案`, 'success');
+                    window.state.editingMemberId = null;
+                    saveState();
+                    render();
+                    return;
+                }
+            }
+
+            try {
+                const data = JSON.parse(text);
+                if (data.roleName || data.cvName) {
+                    tempNewMember = { ...tempNewMember, ...data };
+                    if (tempNewMember.type === 'STAFF') tempNewMember.avatarColor = 'bg-stone-500';
+                    showToast('档案数据已智能填入', 'success');
+                    render();
+                    return;
+                }
+            } catch (e) {
+                let processedText = text.trim();
+                let society = '';
+                const societyMatch = processedText.match(/[【\[](.*?)[】\]]/);
+                if (societyMatch) {
+                    society = societyMatch[1];
+                    processedText = processedText.replace(societyMatch[0], '').trim();
+                }
+
+                const parts = processedText.split(/[\s,，]+/); 
+                if (parts.length >= 1) {
+                    tempNewMember.roleName = parts[0];
+                    if (parts.length >= 2) tempNewMember.cvName = parts[1];
+                    if (society) tempNewMember.society = society;
+                    showToast('快速格式已解析', 'success');
+                    render();
+                } else {
+                    showToast('格式无法识别', 'error');
+                }
+            }
+        };
+
+        window.confirmAddMember = () => {
+            if (!tempNewMember.roleName) return showToast('请输入角色名', 'error');
+            const ep = window.state.projects[window.state.activeProjectId].episodes[window.state.dashboardView];
+            ep.members.push({ id: generateId(), ...tempNewMember, cvName: tempNewMember.cvName || '待定' });
+            window.state.editingMemberId = null;
+            saveState(); render();
+        };
+
+        window.handleAddComment = () => {
+            const input = document.getElementById('comment-input');
+            if (!input.value.trim()) return;
+            const project = window.state.projects[window.state.activeProjectId];
+            const member = Object.values(project.episodes).flatMap(e => e.members).find(m => m.id === window.state.editingMemberId);
+            member.comments.push({ id: generateId(), author: window.state.currentUser.name, content: input.value, timestamp: getNow() });
+            saveState(); render();
+        };
+        
+        window.sendGlobalMessage = () => {
+            const input = document.getElementById('global-chat-input');
+            if (!input.value.trim()) return;
+            window.state.globalMessages.push({
+                id: generateId(),
+                author: window.state.currentUser.name,
+                role: window.state.currentUser.role,
+                content: input.value,
+                timestamp: getNow()
+            });
+            input.value = '';
+            saveState();
+            render();
+        };
+
+        window.handleDeleteMember = (id) => { 
+            showConfirm('确定删除该档案？', () => {
+                const p = window.state.projects[window.state.activeProjectId]; 
+                Object.values(p.episodes).forEach(ep => { ep.members = ep.members.filter(m => m.id !== id); }); 
+                window.state.editingMemberId = null; 
+                saveState(); 
+                render(); 
+            });
+        };
+        window.handleAddEpisode = () => { const t = document.getElementById('new-ep-title').value; if(!t) return showToast('请输入标题', 'error'); const p = window.state.projects[window.state.activeProjectId]; const id = 'EP-'+generateId(); p.episodes[id] = { id, title: t, status: 'scripting', members: getStandardStaffTemplate() }; window.state.showNewEpModal=false; saveState(); render(); };
+        window.openEditEp = (id) => { window.state.editingEpId = id; window.state.showEditEpModal = true; render(); };
+        window.openEditMember = (id) => { window.state.editingMemberId = id; render(); };
+        window.handleUpdateEpisode = () => { const t = document.getElementById('edit-ep-title').value; if(!t) return showToast('标题不能为空', 'error'); window.state.projects[window.state.activeProjectId].episodes[window.state.editingEpId].title = t; window.state.showEditEpModal = false; saveState(); render(); };
+        window.handleDeleteEpisode = () => { 
+            showConfirm('确认删除整条时间线？', () => {
+                delete window.state.projects[window.state.activeProjectId].episodes[window.state.editingEpId]; 
+                window.state.showEditEpModal = false; 
+                window.state.dashboardView = 'OVERVIEW'; 
+                saveState(); 
+                render(); 
+            });
+        };
+        window.updateEpStatus = (id, s) => { window.state.projects[window.state.activeProjectId].episodes[id].status = s; saveState(); render(); };
+        
+        window.handleQuickAssign = () => { 
+            if (!window.state.cmdText) return showToast('请输入指令内容', 'error'); 
+            
+            let targetMemberId = window.state.cmdMemberId;
+            const ep = window.state.projects[window.state.activeProjectId].episodes[window.state.cmdEp];
+
+            if (!targetMemberId) {
+                let publicMember = ep.members.find(m => m.roleName === '公共事务' && m.type === 'STAFF');
+                if (!publicMember) {
+                    publicMember = {
+                        id: generateId(),
+                        roleName: '公共事务',
+                        cvName: '系统托管',
+                        type: 'STAFF',
+                        status: 'working',
+                        avatarColor: 'bg-slate-500',
+                        comments: [],
+                        tasks: [],
+                        feedbackLink: '', weibo: '', email: '', society: ''
+                    };
+                    ep.members.push(publicMember);
+                }
+                targetMemberId = publicMember.id;
+            }
+
+            const m = ep.members.find(m => m.id === targetMemberId); 
+            if(!m.tasks) m.tasks=[];
+            m.tasks.push({ id: generateId(), text: window.state.cmdText, done: false, ddl: window.state.cmdDDL, link: window.state.cmdLink, comments: [] }); 
+            window.state.cmdText = ''; window.state.cmdLink = ''; 
+            
+            showToast(window.state.cmdMemberId ? '任务已派发' : '任务已作为【公共事务】发布', 'success'); 
+            saveState(); render(); 
+        };
+        
+        window.toggleTaskStatus = (epId, mId, tId) => { 
+            const m = window.state.projects[window.state.activeProjectId].episodes[epId].members.find(m => m.id === mId); 
+            const t = m.tasks.find(x => x.id === tId); 
+            t.done = !t.done; 
+            saveState(); render(); 
+        };
+        
+        window.prepareEditTask = (epId, memberId, taskId) => {
+            window.state.editingTask = { epId, memberId, taskId };
+            window.state.showEditTaskModal = true;
+            render();
+        };
+        window.handleSaveTaskEdit = () => {
+            const text = document.getElementById('edit-task-text').value;
+            const link = document.getElementById('edit-task-link').value;
+            const ddl = document.getElementById('edit-task-ddl').value;
+            const { epId, memberId, taskId } = window.state.editingTask;
+            const m = window.state.projects[window.state.activeProjectId].episodes[epId].members.find(m => m.id === memberId);
+            const t = m.tasks.find(x => x.id === taskId);
+            t.text = text; t.link = link; t.ddl = ddl;
+            window.state.showEditTaskModal = false;
+            saveState(); render();
+        };
+        window.handleDeleteTask = (epId, memberId, taskId) => {
+            showConfirm('确认删除此任务？', () => {
+                const m = window.state.projects[window.state.activeProjectId].episodes[epId].members.find(m => m.id === memberId);
+                m.tasks = m.tasks.filter(t => t.id !== taskId);
+                saveState(); render();
+            });
+        };
+
+        window.openTaskDetail = (epId, memberId, taskId) => {
+            window.state.viewingTask = { epId, memberId, taskId };
+            window.state.editingCommentId = null;
+            render();
+        };
+
+        window.prepareEditTaskComment = (commentId) => {
+            const { epId, memberId, taskId } = window.state.viewingTask;
+            const m = window.state.projects[window.state.activeProjectId].episodes[epId].members.find(m => m.id === memberId);
+            const t = m.tasks.find(x => x.id === taskId);
+            const comment = t.comments.find(c => c.id === commentId);
+            if(comment) {
+                document.getElementById('task-comment-text').value = comment.content;
+                document.getElementById('task-comment-link').value = comment.link || '';
+                window.state.editingCommentId = commentId;
+                render(); 
+            }
+        };
+
+        window.cancelEditTaskComment = () => {
+            window.state.editingCommentId = null;
+            document.getElementById('task-comment-text').value = '';
+            document.getElementById('task-comment-link').value = '';
+            render();
+        };
+
+        window.handleDeleteTaskComment = (commentId) => {
+            showConfirm('确认撤回这条留言？', () => {
+                const { epId, memberId, taskId } = window.state.viewingTask;
+                const m = window.state.projects[window.state.activeProjectId].episodes[epId].members.find(m => m.id === memberId);
+                const t = m.tasks.find(x => x.id === taskId);
+                t.comments = t.comments.filter(c => c.id !== commentId);
+                saveState(); render();
+            });
+        };
+
+        window.handleAddTaskComment = () => {
+            const textInput = document.getElementById('task-comment-text');
+            const linkInput = document.getElementById('task-comment-link');
+            const text = textInput.value;
+            const link = linkInput.value;
+            
+            if(!text.trim()) return;
+            
+            const { epId, memberId, taskId } = window.state.viewingTask;
+            const m = window.state.projects[window.state.activeProjectId].episodes[epId].members.find(m => m.id === memberId);
+            const t = m.tasks.find(x => x.id === taskId);
+            if(!t.comments) t.comments = [];
+
+            if (window.state.editingCommentId) {
+                const comment = t.comments.find(c => c.id === window.state.editingCommentId);
+                if (comment) {
+                    comment.content = text;
+                    comment.link = link;
+                    comment.isEdited = true; 
+                }
+                window.state.editingCommentId = null; 
+            } else {
+                t.comments.push({ 
+                    id: generateId(), 
+                    author: window.state.currentUser.name, 
+                    content: text, 
+                    link: link, 
+                    timestamp: getNow() 
+                });
+            }
+            
+            textInput.value = '';
+            linkInput.value = '';
+            saveState(); render();
+        };
+
+        window.copyProjectLink = () => { const url = window.location.href.split('?')[0] + '?p=' + window.state.activeProjectId; navigator.clipboard.writeText(url).then(() => showToast('✨ 剧集坐标已复制！Staff 打开即刻降落。', 'success')); };
+        window.copyEpisodeLink = () => { const url = window.location.href.split('?')[0] + '?p=' + window.state.activeProjectId + '&e=' + window.state.dashboardView; navigator.clipboard.writeText(url).then(() => showToast('📍 分集坐标已复制！', 'success')); };
+        window.handleAddProject = () => {
+            const name = document.getElementById('new-proj-name').value;
+            const desc = document.getElementById('new-proj-desc').value;
+            const color = document.getElementById('new-proj-color').value;
+            if(!name) return showToast('名称不能为空', 'error');
+            const id = 'PROJ-' + generateId();
+            window.state.projects[id] = {
+                id: id, name: name, description: desc || '暂无描述', themeColor: color,
+                episodes: { 'EP1': { id: 'EP1', title: '第一期：新篇章', status: 'scripting', members: getStandardStaffTemplate() } }
+            };
+            window.state.showNewProjectModal = false;
+            saveState(); render();
+        };
+        window.importMembersFromFirstEp = () => {
+            const project = window.state.projects[window.state.activeProjectId];
+            const epKeys = Object.keys(project.episodes);
+            if(epKeys.length === 0) return;
+            
+            let firstEp = project.episodes['EP1'];
+            if (!firstEp) {
+                const firstKey = epKeys.find(k => project.episodes[k].title.includes('第一') || project.episodes[k].title.includes('EP1') || project.episodes[k].title.includes('Ep1'));
+                firstEp = firstKey ? project.episodes[firstKey] : project.episodes[epKeys[0]];
+            }
+            
+            if (!firstEp) return showToast('未找到可供复刻的源数据', 'error');
+
+            const currentEp = project.episodes[window.state.dashboardView];
+            if (!currentEp) return showToast('当前剧集无效', 'error');
+
+            showConfirm(`确认从 ${firstEp.title} 复刻所有演职人员（CAST + STAFF）吗？`, () => {
+                const now = Date.now();
+                const membersToImport = firstEp.members.map((m, idx) => ({ 
+                    ...JSON.parse(JSON.stringify(m)), 
+                    id: generateId() + '-' + now + '-' + idx, 
+                    status: m.type === 'CAST' ? 'recording' : 'pending',
+                    comments: [], 
+                    tasks: [], 
+                    fileLink: '', 
+                    isAudioCut: false 
+                }));
+                
+                const newRoster = [...(currentEp.members || []), ...membersToImport];
+                
+                if (newRoster.length < (currentEp.members?.length || 0)) {
+                    return showToast('系统安全拦截：复刻操作可能导致数据丢失，已终止。', 'error');
+                }
+
+                currentEp.members = newRoster;
+                saveState(); 
+                render(); 
+                showToast(`成功复刻 ${membersToImport.length} 个演职员档案！`, 'success');
+            });
+        };
+
+        window.openEditProject = (id) => { window.state.editingProjectId = id; window.state.showEditProjectModal = true; render(); };
+        window.handleUpdateProject = () => {
+            const name = document.getElementById('edit-proj-name').value;
+            const desc = document.getElementById('edit-proj-desc').value;
+            const color = document.getElementById('edit-proj-color').value;
+            if(!name) return showToast('名称不能为空', 'error');
+            window.state.projects[window.state.editingProjectId].name = name;
+            window.state.projects[window.state.editingProjectId].description = desc;
+            window.state.projects[window.state.editingProjectId].themeColor = color;
+            window.state.showEditProjectModal = false;
+            saveState(); render();
+        };
+        window.handleDeleteProject = () => { 
+            showConfirm('危险操作：确定要彻底删除整个剧集项目吗？所有数据将永久丢失。', () => {
+                delete window.state.projects[window.state.editingProjectId]; 
+                window.state.showEditProjectModal = false; 
+                window.state.activeProjectId = null; 
+                saveState(); 
+                render(); 
+            });
+        };
+
+        checkDeepLink();
+        render();
+    </script>
+</body>
+</html>
